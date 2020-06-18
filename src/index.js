@@ -1,1 +1,1 @@
-// noop
+export { addTemplateDirectory } from "./hooks/templates"
