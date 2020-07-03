@@ -1,17 +1,33 @@
+const merge = require("lodash/merge")
+
 module.exports = (options) => ({
   plugins: [
-    // `gatsby-plugin-sharp`,
-    // {
-    //   resolve: `gatsby-source-filesystem`,
-    //   options: {
-    //     name: `images`,
-    //     path: `${__dirname}/src/images`,
-    //   },
-    // },
     {
       resolve: `gatsby-source-wordpress-experimental`,
-      options,
+      options: merge(
+        {
+          type: {
+            __all: {
+              routes: {
+                single: false,
+                archive: false,
+              },
+            },
+            ContentNode: {
+              routes: {
+                single: true,
+                archive: false,
+              },
+            },
+            MediaItem: {
+              routes: {
+                single: false,
+              },
+            },
+          },
+        },
+        options
+      ),
     },
-    // `gatsby-transformer-sharp`,
   ],
 })
