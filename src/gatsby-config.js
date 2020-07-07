@@ -22,6 +22,7 @@ module.exports = (options) => ({
             MediaItem: {
               routes: {
                 single: false,
+                archive: false,
               },
             },
           },
