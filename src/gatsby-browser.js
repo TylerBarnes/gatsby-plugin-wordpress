@@ -1,7 +1,7 @@
 /* eslint strict: 0 */
 
 const logStyles =
-  "font-size: 15px; font-weight: bold; padding: 10px 20px; background: black; color: white;"
+  "line-height: 1.25; font-size: 13px; font-weight: bold; padding: 10px 20px; background: black; color: white;"
 
 /**
  * This export adds helper messages to the browser console in development
