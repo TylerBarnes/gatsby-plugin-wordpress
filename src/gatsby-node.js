@@ -10,17 +10,63 @@ const {
 } = require(`gatsby-source-wordpress-experimental/utils/hooks`)
 const { default: store } = require("gatsby-source-wordpress-experimental/store")
 
-exports.createPages = async ({ actions, graphql }) => {
-  const templates = await getTemplates()
-  const routeConfigs = await getRouteConfigs({ graphql })
+exports.createPages = async ({ actions, graphql, reporter }) => {
+  try {
+    const templates = await getTemplates()
+    const routeConfigs = await getRouteConfigs({ graphql })
 
-  for (const routeConfig of routeConfigs) {
-    await createPagesFromRouteConfig({
-      routeConfig,
-      actions,
-      graphql,
-      templates,
-    })
+    let allPageNodes = []
+
+    function getRouteConfigApi(routeConfig) {
+      const api = {
+        routeConfig,
+        actions,
+        graphql,
+        templates,
+        reporter,
+      }
+
+      return api
+    }
+
+    // first create all single pages
+    for (const routeConfig of routeConfigs) {
+      const api = getRouteConfigApi(routeConfig)
+
+      const { routeOptions } = routeConfig
+
+      if (!routeOptions) {
+        return
+      }
+
+      if (routeOptions.single) {
+        const pageNodes = await createSinglePages(api)
+
+        // if createSinglePages returns nodes that created pages
+        // we want to track them and pass them along to archive pages
+        if (Array.isArray(pageNodes) && pageNodes.length) {
+          allPageNodes = [...allPageNodes, ...pageNodes]
+        }
+      }
+    }
+
+    // then create archive pages
+    // archive pages need to come second because
+    // if an archive page is set to the same path as
+    // a normal page, we want the archive page to
+    // mix the data from the paginated archive
+    // and the single node page
+    for (const routeConfig of routeConfigs) {
+      const api = getRouteConfigApi(routeConfig)
+      const { routeOptions } = routeConfig
+
+      if (routeOptions.archive) {
+        await createPaginatedArchive({ ...api, pageNodes: allPageNodes })
+      }
+    }
+  } catch (e) {
+    e.message = `[gatsby-plugin-wordpress]: ${e.message}`
+    reporter.panic(e)
   }
 }
 
@@ -32,7 +78,7 @@ const createSinglePages = async ({
 }) => {
   const { nodeListFieldName, nodeTypeName, sortArgs } = routeConfig
 
-  let contentTypeTemplate = getTemplatePath({
+  const contentTypeTemplate = getTemplatePath({
     templates,
     pathEnding: `single/${nodeTypeName}`,
     fallBackPathEnding: `single/index`,
@@ -83,18 +129,39 @@ const createSinglePages = async ({
 
   for (const edge of edges) {
     const { node, next, previous } = edge
-    await actions.createPage({
+
+    const component = resolve(contentTypeTemplate)
+
+    const context = {
+      id: node.id,
+      nextSinglePageId: next?.id ?? firstNode.id,
+      previousSinglePageId: previous?.id ?? lastNode.id,
+      isLastSingle: !!next?.id,
+      isFirstSingle: !!previous?.id,
+      isSingle: true,
+      singleNodeType: nodeTypeName,
+    }
+
+    if (process.env.NODE_ENV === `development`) {
+      context.component__DEVELOPMENT_ONLY = component
+    }
+
+    // this pageContext is saved because we pass these node edges along
+    // to createPaginatedArchive incase an archive page has the same
+    // page path as a single page. In that case it should be both a single
+    // page and an archive
+    edge.context = context
+
+    const pageConfig = {
       path: node.uri,
-      component: resolve(contentTypeTemplate),
-      context: {
-        id: node.id,
-        nextId: next?.id ?? firstNode.id,
-        previousId: previous?.id ?? lastNode.id,
-        isLast: !!next?.id,
-        isFirst: !!previous?.id,
-      },
-    })
+      component,
+      context,
+    }
+
+    await actions.createPage(pageConfig)
   }
+
+  return edges
 }
 
 const createPaginatedArchive = async (api) => {
@@ -109,10 +176,52 @@ const createPaginatedArchive = async (api) => {
     graphql,
     templates,
     actions,
+    reporter,
+    pageNodes,
   } = api
 
   if (routeOptions?.archivePathBase) {
     archivePathBase = routeOptions.archivePathBase
+  }
+
+  if (!archivePathBase) {
+    reporter.panic(
+      `[gatsby-plugin-wordpress] No archive path found in WordPress for ${nodeTypeName} archive.\nWhen registering your post type, make sure has_archive is true. If you're using Custom Post Type UI, you can change this with the "Has Archive" setting in the CPT edit ui.\nIf you've registered your post type via PHP, refer to the docs https://developer.wordpress.org/reference/functions/register_post_type/.\nAlternatively, you can add an archivePathBase to the type options for this type:
+      
+      {
+        resolve: "gatsby-plugin-wordpress",
+        options: {
+          type: {
+            ${nodeTypeName}: {
+              routes: {
+                archive: true,
+                archivePathBase: "fancy-page-path"
+              }
+            }
+          }
+        }
+      }
+
+      It's recommended to let WordPress handle this and to not use this option except as a last resort. If you use this option then WordPress will not be aware of the link to this archive page.
+
+      If you don't want this type to have an archive page in your Gatsby site, then add this option:
+
+      {
+        resolve: "gatsby-plugin-wordpress",
+        options: {
+          type: {
+            ${nodeTypeName}: {
+              routes: {
+                archive: false
+              }
+            }
+          }
+        }
+      }
+      `
+    )
+
+    return
   }
 
   if (archivePathBase.startsWith(`/`)) {
@@ -178,31 +287,59 @@ const createPaginatedArchive = async (api) => {
         `/${archivePathBase}/${pageNumber}/`
   }
 
+  // this map is
+  // page path (key) [/my-page/here/]
+  // to node (object) { path: "/my-page/here/", id: "jkl3429d=", ...etc }
+  // used to determine if an archive page is at the same page path as
+  // a single post page. In that case the two should be combined.
+  const pageNodesByPath = pageNodes?.reduce((accumulator, current) => {
+    accumulator.set(current.node.uri, current)
+
+    return accumulator
+  }, new Map())
+
   await Promise.all(
     chunkedContentNodes.map(async (nodesChunk, index) => {
       const firstNode = nodesChunk[0]
       const page = index + 1
       const offset = perPage * index
-      const isFirst = page === 1
-      const isLast = page === chunkedContentNodes.length
-      const previousPagePath = getArchivePageNumberPath(page - 1)
-      const nextPagePath = getArchivePageNumberPath(page + 1)
+      const isFirstArchivePage = page === 1
+      const isLastArchivePage = page === chunkedContentNodes.length
+      const previousArchivePath = getArchivePageNumberPath(page - 1)
+      const nextArchivePath = getArchivePageNumberPath(page + 1)
 
-      await actions.createPage({
-        component: resolve(foundTemplatePath),
-        path: getArchivePageNumberPath(page),
-        context: {
-          firstId: firstNode.id,
-          page: page,
-          offset: offset,
-          totalPages: chunkedContentNodes.length,
-          isFirst,
-          isLast,
-          previousPagePath,
-          nextPagePath,
-          perPage,
-        },
-      })
+      const path = getArchivePageNumberPath(page)
+
+      const component = resolve(foundTemplatePath)
+
+      const context = {
+        firstArchiveNodeId: firstNode.id,
+        archivePage: page,
+        archiveOffset: offset,
+        totalArchivePages: chunkedContentNodes.length,
+        isArchive: true,
+        archiveNodeType: nodeTypeName,
+        isFirstArchivePage,
+        isLastArchivePage,
+        previousArchivePath,
+        nextArchivePath,
+        perPage,
+        // if we have a single node for this path,
+        // then add it's context here as well
+        ...(pageNodesByPath.get(path)?.context || {}),
+      }
+
+      if (process.env.NODE_ENV === `development`) {
+        context.component__DEVELOPMENT_ONLY = component
+      }
+
+      const pageConfig = {
+        component,
+        path,
+        context,
+      }
+
+      await actions.createPage(pageConfig)
     })
   )
 }
@@ -249,6 +386,7 @@ const getTypeNameRouteOptions = (typeName) => {
 const getTemplates = async () => {
   const sitePath = path.resolve(`./`)
 
+  // this allows themes and plugins to register template directories
   const templateDirectories = await applyNodeFilter({
     name: `wp-template-directories`,
     data: [],
@@ -294,14 +432,14 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
       allWpContentType {
         nodes {
           graphqlSingleName
-          graphqlPluralName
+          archivePath
         }
       }
 
       allWpTaxonomy {
         nodes {
           graphqlSingleName
-          graphqlPluralName
+          archivePath
         }
       }
     }
@@ -310,14 +448,14 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
   // add the user type as a content type
   contentTypeNodes.push({
     graphqlSingleName: `user`,
-    graphqlPluralName: `users`,
+    archivePath: `users`,
     name: `user`,
   })
 
   // use our remote schema root fields to find the
   // types of our graphql content types
   const contentTypes = [...contentTypeNodes, ...taxonomyNodes].map(
-    ({ graphqlSingleName, graphqlPluralName }) => {
+    ({ graphqlSingleName, archivePath }) => {
       const type = typeMap.get(
         rootFields.find((rootField) => rootField.name === graphqlSingleName)
           .type.name
@@ -327,7 +465,7 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
 
       return {
         ...type,
-        archivePathBase: graphqlPluralName,
+        archivePathBase: archivePath,
       }
     }
   )
@@ -372,38 +510,52 @@ const getRouteConfigs = async ({ graphql }) => {
   })
 }
 
-const getTemplatePath = ({ templates, pathEnding, fallBackPathEnding }) => {
-  const templatePathEnding = `/wp-templates/${pathEnding}`
+const findTemplateByPathEnding = ({ templatePathEnding, templates }) => {
+  const stripExtensionFromPath = (path) => {
+    const firstIndex = path.includes(`/wp-templates`)
+      ? path.lastIndexOf(`/wp-templates`)
+      : 0
+    const lastIndex = path.includes(`.`) ? path.lastIndexOf(`.`) : path.length
 
-  const templatePath = templates.find((path) => {
-    const templatePathWithoutExtension = path.substring(
-      0,
-      path.lastIndexOf(`.`)
-    )
+    return path.substring(firstIndex, lastIndex)
+  }
 
-    return (
-      templatePathWithoutExtension.endsWith(templatePathEnding) ||
-      templatePathWithoutExtension.endsWith(fallBackPathEnding)
+  const templatePathEndingWithoutExtension = stripExtensionFromPath(
+    templatePathEnding
+  )
+
+  if (
+    !templatePathEndingWithoutExtension ||
+    templatePathEndingWithoutExtension === ``
+  ) {
+    return null
+  }
+
+  const matchedTemplate = templates.find((path) => {
+    const templatePathWithoutExtension = stripExtensionFromPath(path)
+
+    return templatePathWithoutExtension.endsWith(
+      templatePathEndingWithoutExtension
     )
   })
 
-  return templatePath
+  return matchedTemplate
 }
 
-const createPagesFromRouteConfig = async (api) => {
-  const {
-    routeConfig: { routeOptions },
-  } = api
+const getTemplatePath = ({ templates, pathEnding, fallBackPathEnding }) => {
+  const templatePathEnding = `/wp-templates/${pathEnding}`
 
-  if (!routeOptions) {
-    return
+  const templatePath = findTemplateByPathEnding({
+    templates,
+    templatePathEnding,
+  })
+
+  if (!templatePath) {
+    templatePath = findTemplateByPathEnding({
+      template,
+      templatePathEnding: `/wp-templates/${fallBackPathEnding}`,
+    })
   }
 
-  if (routeOptions.single) {
-    await createSinglePages(api)
-  }
-
-  if (routeOptions.archive) {
-    await createPaginatedArchive(api)
-  }
+  return templatePath
 }
