@@ -4,92 +4,241 @@ const glob = require(`glob`)
 const chunk = require(`lodash/chunk`)
 const merge = require(`lodash/merge`)
 const kebabCase = require(`lodash/kebabCase`)
+const fs = require(`fs-extra`)
 
 const {
   applyNodeFilter,
 } = require(`gatsby-source-wordpress-experimental/utils/hooks`)
 const { default: store } = require("gatsby-source-wordpress-experimental/store")
 
-exports.createPages = async ({ actions, graphql, reporter }) => {
+const nodeTemplateStatusReasons = {
+  noMatchingTemplateExists: `No matching template exists.`,
+  noArchivePath: `No archive path found in WordPress or gatsby-config.js.`,
+  archiveRoutingIsDisabledInConfig: `Archive routing is disabled for this type in gatsby-config.js.`,
+  graphqlQueryErrored: `The GraphQL query for this node type returned errors`,
+  nodeTypeDoesntExistInGatsby: `This node type doesn't exist in the Gatsby schema.`,
+  pageWasCreatedWithTemplate: `Page was created with template.`,
+}
+
+const nodeTemplateStatuses = {
+  rejected: `Rejected`,
+  accepted: `Accepted`,
+}
+
+exports.createPages = async (gatsbyApi, pluginOptions) => {
   try {
-    const routeConfigs = await getRouteConfigs({ graphql })
+    const { nodeTemplateReports } = await createPages(gatsbyApi, pluginOptions)
+    await handleTemplateReports(gatsbyApi, pluginOptions, {
+      nodeTemplateReports,
+    })
+  } catch (e) {
+    e.message = `[gatsby-plugin-wordpress]: ${e.message}`
+    gatsbyApi.reporter.panic(e)
+  }
+}
 
-    let allPageNodes = []
-
-    function getRouteConfigApi(routeConfig) {
-      const api = {
-        routeConfig,
-        actions,
-        graphql,
-        reporter,
-      }
-
-      return api
-    }
-
-    // first create all single pages
-    for (const routeConfig of routeConfigs) {
-      const api = getRouteConfigApi(routeConfig)
-
-      const { routeOptions } = routeConfig
-
-      if (!routeOptions) {
-        return
-      }
-
-      if (routeOptions.single) {
-        const pageNodes = await createSinglePages(api)
-
-        // if createSinglePages returns nodes that created pages
-        // we want to track them and pass them along to archive pages
-        if (Array.isArray(pageNodes) && pageNodes.length) {
-          allPageNodes = [...allPageNodes, ...pageNodes]
+const getGatsbySchemaRootFieldNames = async ({ graphql }) => {
+  const result = await graphql(/* GraphQL */ `
+    {
+      __schema {
+        queryType {
+          fields {
+            name
+          }
         }
       }
     }
+  `)
 
-    // then create archive pages
-    // archive pages need to come second because
-    // if an archive page is set to the same path as
-    // a normal page, we want the archive page to
-    // mix the data from the paginated archive
-    // and the single node page
-    for (const routeConfig of routeConfigs) {
-      const api = getRouteConfigApi(routeConfig)
-      const { routeOptions } = routeConfig
+  const {
+    data: {
+      __schema: {
+        queryType: { fields },
+      },
+    },
+  } = result
 
-      if (routeOptions.archive) {
-        await createPaginatedArchive({ ...api, pageNodes: allPageNodes })
+  const gatsbySchemaRootFields = fields.map(({ name }) => name)
+
+  return gatsbySchemaRootFields
+}
+
+const createPages = async ({ actions, graphql, reporter }) => {
+  const gatsbySchemaRootFields = await getGatsbySchemaRootFieldNames({
+    graphql,
+  })
+
+  const routeConfigs = await getRouteConfigs({ graphql })
+
+  function getRouteConfigApi(routeConfig) {
+    const api = {
+      routeConfig,
+      actions,
+      graphql,
+      reporter,
+      gatsbySchemaRootFields,
+    }
+
+    return api
+  }
+
+  let allNodeTemplateReports = []
+  let allPageNodes = []
+
+  // first create all single pages
+  for (const routeConfig of routeConfigs) {
+    const api = getRouteConfigApi(routeConfig)
+
+    const { routeOptions, nodeListFieldName } = routeConfig
+
+    if (!gatsbySchemaRootFields.includes(nodeListFieldName)) {
+      allNodeTemplateReports.push({
+        nodeTemplateStatus: nodeTemplateStatuses.rejected,
+        reason: nodeTemplateStatusReasons.nodeTypeDoesntExistInGatsby,
+        template: null,
+        routeConfig,
+        templateType: `single`,
+      })
+      continue
+    }
+
+    if (routeOptions.single) {
+      const { edges, nodeTemplateReports = [] } =
+        (await createSinglePages(api)) || {}
+
+      allNodeTemplateReports = [
+        ...allNodeTemplateReports,
+        ...nodeTemplateReports,
+      ]
+
+      // if createSinglePages returns nodes that created pages
+      // we want to track them and pass them along to archive pages
+      if (Array.isArray(edges) && edges.length) {
+        allPageNodes = [...allPageNodes, ...edges]
       }
     }
-  } catch (e) {
-    e.message = `[gatsby-plugin-wordpress]: ${e.message}`
-    reporter.panic(e)
   }
+
+  // then create archive pages
+  // archive pages need to come second because
+  // if an archive page is set to the same path as
+  // a normal page, we want the archive page to
+  // mix the data from the paginated archive
+  // and the single node page
+  for (const routeConfig of routeConfigs) {
+    const api = getRouteConfigApi(routeConfig)
+    const { routeOptions, nodeListFieldName } = routeConfig
+
+    // if this type doesn't exist in Gatsby
+    if (!gatsbySchemaRootFields.includes(nodeListFieldName)) {
+      allNodeTemplateReports.push({
+        nodeTemplateStatus: nodeTemplateStatuses.rejected,
+        reason: nodeTemplateStatusReasons.nodeTypeDoesntExistInGatsby,
+        template: null,
+        routeConfig,
+        templateType: `archive`,
+      })
+      continue
+    }
+
+    // if the route options for this type have archive templates turned off
+    if (!routeOptions.archive) {
+      allNodeTemplateReports.push({
+        nodeTemplateStatus: nodeTemplateStatuses.rejected,
+        reason: nodeTemplateStatusReasons.archiveRoutingIsDisabledInConfig,
+        template: null,
+        routeConfig,
+        templateType: `archive`,
+      })
+      continue
+    }
+
+    const nodeTemplateReport = await createPaginatedArchive({
+      ...api,
+      pageNodes: allPageNodes,
+    })
+
+    allNodeTemplateReports.push(nodeTemplateReport)
+  }
+
+  return { nodeTemplateReports: allNodeTemplateReports }
+}
+
+const formatReports = (reportType, reports) =>
+  reports.reduce(
+    (accumulator, current) => {
+      if (current.status === nodeTemplateStatuses.accepted) {
+        accumulator.accepted[current.type] =
+          accumulator.accepted[current.type] || []
+        accumulator.accepted[current.type].push(current)
+      } else {
+        accumulator.rejected[current.type] =
+          accumulator.rejected[current.type] || []
+        accumulator.rejected[current.type].push(current)
+      }
+
+      return accumulator
+    },
+    {
+      reportType,
+      rejected: {},
+      accepted: {},
+    }
+  )
+
+const handleTemplateReports = async (
+  _gatsbyApi,
+  pluginOptions,
+  { nodeTemplateReports }
+) => {
+  const { templateRouting: reportTemplateRouting = false } =
+    pluginOptions?.reports ?? {}
+
+  if (!reportTemplateRouting) {
+    return
+  }
+
+  const normalizedReports = nodeTemplateReports.map((report) => {
+    return {
+      template: report?.template?.replace(process.cwd(), `.`) ?? null,
+      id: report?.node?.id ?? null,
+      type: report?.routeConfig?.nodeTypeName ?? null,
+      kind: report?.templateType,
+      reason: report?.reason,
+      status: report?.nodeTemplateStatus,
+      path: report?.node?.uri ?? report?.routeConfig?.archivePathBase,
+    }
+  })
+
+  const archiveReports = formatReports(
+    `Archive report`,
+    normalizedReports.filter((report) => report.kind === `archive`)
+  )
+
+  const singleReports = formatReports(
+    `Single page report`,
+    normalizedReports.filter((report) => report.kind === `single`)
+  )
+
+  const directory = `${process.cwd()}/WordPress/reports`
+
+  await fs.ensureDir(directory)
+
+  await fs.writeFile(
+    `${directory}/single-page-routing.json`,
+    JSON.stringify(singleReports, null, 2),
+    `utf8`
+  )
+
+  await fs.writeFile(
+    `${directory}/archive-page-routing.json`,
+    JSON.stringify(archiveReports, null, 2),
+    `utf8`
+  )
 }
 
 const createSinglePages = async ({ routeConfig, graphql, actions }) => {
   const { nodeListFieldName, nodeTypeName, sortArgs } = routeConfig
-
-  const contentTypeTemplate = await getTemplatePath({
-    nodeTypeName,
-    templateType: `single`,
-  })
-
-  if (!contentTypeTemplate) {
-    console.log(`\n`)
-    console.warn(`[gatsby-plugin-wordpress] Attempted to create routes for ${nodeTypeName} nodes but no template and no default template exists. Create one at "./src/wp-templates/single/${nodeTypeName}.js" or "./src/wp-templates/single/index.js".\n\n If you don't want to create routes for this type, add the following to your plugin options for gatsby-plugin-wordpress:\n\n {
-  type: {
-    ${nodeTypeName}: {
-      routes: {
-        single: false
-      }
-    }
-  }
-}`)
-    console.log(`\n`)
-    return
-  }
 
   const result = await graphql(/* GraphQL */ `
       query COLLECTION {
@@ -119,10 +268,41 @@ const createSinglePages = async ({ routeConfig, graphql, actions }) => {
   const firstNode = edges[0]
   const lastNode = edges[edges.length - 1]
 
+  const nodeTemplateReports = []
+  const templateType = `single`
+
   for (const edge of edges) {
     const { node, next, previous } = edge
 
-    const component = resolve(contentTypeTemplate)
+    const template = await getTemplatePath({
+      nodeTypeName,
+      templateType,
+      node,
+    })
+
+    if (!template) {
+      nodeTemplateReports.push({
+        node,
+        nodeTypeName,
+        templateType,
+        routeConfig,
+        template: null,
+        reason: nodeTemplateStatusReasons.noMatchingTemplateExists,
+        nodeTemplateStatus: nodeTemplateStatuses.rejected,
+      })
+      continue
+    } else {
+      nodeTemplateReports.push({
+        node,
+        routeConfig,
+        templateType,
+        template: template,
+        reason: nodeTemplateStatusReasons.pageWasCreatedWithTemplate,
+        nodeTemplateStatus: nodeTemplateStatuses.accepted,
+      })
+    }
+
+    const component = resolve(template)
 
     const context = {
       id: node.id,
@@ -159,68 +339,35 @@ const createSinglePages = async ({ routeConfig, graphql, actions }) => {
     await actions.createPage(pageConfig)
   }
 
-  return edges
+  return { edges, nodeTemplateReports }
 }
 
 const createPaginatedArchive = async (api) => {
+  const { routeConfig, graphql, actions, pageNodes } = api
+
   let {
-    routeConfig: {
-      nodeListFieldName,
-      nodeTypeName,
-      sortArgs,
-      sortFields,
-      sortOrder,
-      routeOptions,
-      archivePathBase = ``,
-    },
-    graphql,
-    actions,
-    reporter,
-    pageNodes,
-  } = api
+    nodeListFieldName,
+    nodeTypeName,
+    sortArgs,
+    sortFields,
+    sortOrder,
+    routeOptions,
+    archivePathBase = ``,
+  } = routeConfig
+
+  const templateType = `archive`
 
   if (routeOptions?.archivePathBase) {
     archivePathBase = routeOptions.archivePathBase
   }
 
   if (!archivePathBase) {
-    reporter.panic(
-      `[gatsby-plugin-wordpress] No archive path found in WordPress for ${nodeTypeName} archive.\nWhen registering your post type, make sure has_archive is true. If you're using Custom Post Type UI, you can change this with the "Has Archive" setting in the CPT edit ui.\nIf you've registered your post type via PHP, refer to the docs https://developer.wordpress.org/reference/functions/register_post_type/.\nAlternatively, you can add an archivePathBase to the type options for this type:
-      
-      {
-        resolve: "gatsby-plugin-wordpress",
-        options: {
-          type: {
-            ${nodeTypeName}: {
-              routes: {
-                archive: true,
-                archivePathBase: "fancy-page-path"
-              }
-            }
-          }
-        }
-      }
-
-      It's recommended to let WordPress handle this and to not use this option except as a last resort. If you use this option then WordPress will not be aware of the link to this archive page.
-
-      If you don't want this type to have an archive page in your Gatsby site, then add this option:
-
-      {
-        resolve: "gatsby-plugin-wordpress",
-        options: {
-          type: {
-            ${nodeTypeName}: {
-              routes: {
-                archive: false
-              }
-            }
-          }
-        }
-      }
-      `
-    )
-
-    return
+    return {
+      nodeTemplateStatus: nodeTemplateStatuses.rejected,
+      reason: nodeTemplateStatusReasons.noArchivePath,
+      routeConfig,
+      templateType,
+    }
   }
 
   if (archivePathBase.startsWith(`/`)) {
@@ -244,27 +391,33 @@ const createPaginatedArchive = async (api) => {
     }
   `)
 
-  const { nodes } = data[nodeListFieldName]
+  const { nodes, errors } = data?.[nodeListFieldName] ?? {}
+
+  if (errors?.length) {
+    return {
+      nodeTemplateStatus: nodeTemplateStatuses.rejected,
+      reason: nodeTemplateStatusReasons.graphqlQueryErrored,
+      errors,
+      routeConfig,
+      templateType,
+    }
+  }
 
   const foundTemplatePath = await getTemplatePath({
     nodeTypeName,
-    templateType: `archive`,
+    templateType,
   })
 
   if (!foundTemplatePath) {
-    console.log(`\n`)
-    console.warn(`[gatsby-plugin-wordpress] Attempted to create paginated archive pages for ${nodeTypeName} nodes but no template and no default template exists. Create one at "./src/wp-templates/archive/${nodeTypeName}.js" or "./src/wp-templates/archive/index.js".\n\n If you don't want to create routes for this type, add the following to your plugin options for gatsby-plugin-wordpress:\n\n {
-  type: {
-    ${nodeTypeName}: {
-      routes: {
-        archive: false
-      }
+    return {
+      nodeTemplateStatus: nodeTemplateStatuses.rejected,
+      reason: nodeTemplateStatusReasons.noMatchingTemplateExists,
+      routeConfig,
+      templateType,
     }
   }
-}`)
-    console.log(`\n`)
-    return
-  }
+
+  const component = resolve(foundTemplatePath)
 
   const perPage = routeOptions?.perPage ?? 10
   const chunkedContentNodes = chunk(nodes, perPage)
@@ -308,9 +461,7 @@ const createPaginatedArchive = async (api) => {
 
       const path = getArchivePageNumberPath(page)
 
-      const component = resolve(foundTemplatePath)
-
-      const context = {
+      let context = {
         archivePage: page,
         totalArchivePages: chunkedContentNodes.length,
         isFirstArchivePage,
@@ -321,9 +472,17 @@ const createPaginatedArchive = async (api) => {
         sortFields,
         sortOrder,
         id: null,
-        // if we have a single node for this path,
-        // then add it's context here as well
-        ...(pageNodesByPath.get(path)?.context || {}),
+      }
+
+      // if we have a single node for this path,
+      const correspondingSinglePageContext = pageNodesByPath.get(path)?.context
+
+      // then add it's context here as well
+      if (correspondingSinglePageContext) {
+        context = {
+          ...context,
+          ...correspondingSinglePageContext,
+        }
       }
 
       if (process.env.NODE_ENV === `development`) {
@@ -341,6 +500,14 @@ const createPaginatedArchive = async (api) => {
       await actions.createPage(pageConfig)
     })
   )
+
+  return {
+    nodeTemplateStatus: nodeTemplateStatuses.accepted,
+    reason: nodeTemplateStatusReasons.pageWasCreatedWithTemplate,
+    template: component,
+    routeConfig,
+    templateType,
+  }
 }
 
 // @todo move this into gatsby-source-wordpress
@@ -432,6 +599,7 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
         nodes {
           graphqlSingleName
           archivePath
+          name
         }
       }
 
@@ -439,6 +607,7 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
         nodes {
           graphqlSingleName
           archivePath
+          name
         }
       }
     }
@@ -454,7 +623,7 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
   // use our remote schema root fields to find the
   // types of our graphql content types
   const contentTypes = [...contentTypeNodes, ...taxonomyNodes].map(
-    ({ graphqlSingleName, archivePath }) => {
+    ({ graphqlSingleName, archivePath, name }) => {
       const type = typeMap.get(
         rootFields.find((rootField) => rootField.name === graphqlSingleName)
           .type.name
@@ -462,9 +631,15 @@ const getCollectionGraphQLTypes = async ({ graphql }) => {
 
       delete type.fields
 
+      let archivePathBase = archivePath
+
+      if (!archivePathBase || archivePathBase === "") {
+        archivePathBase = `/${name}/`
+      }
+
       return {
         ...type,
-        archivePathBase: archivePath,
+        archivePathBase,
       }
     }
   )
@@ -476,43 +651,52 @@ const getRouteConfigs = async ({ graphql }) => {
   const { typePrefix } = store.getState().gatsbyApi.pluginOptions.schema
   const collectionGraphQLTypes = await getCollectionGraphQLTypes({ graphql })
 
-  return collectionGraphQLTypes.map((collectionType) => {
-    const { name, interfaces, archivePathBase } = collectionType
-    const collectionRouteOptions = getTypeNameRouteOptions(name)
-    const nodeListFieldName = `all${typePrefix}${name}`
+  const normalizedCollectionGraphQLTypes = collectionGraphQLTypes.map(
+    (collectionType) => {
+      const { name, interfaces, archivePathBase } = collectionType
+      const collectionRouteOptions = getTypeNameRouteOptions(name)
+      const nodeListFieldName = `all${typePrefix}${name}`
 
-    let sortFields = `null`
-    let sortOrder = `DESC`
-    let sortArgs = ``
+      let sortFields = `null`
+      let sortOrder = `DESC`
+      let sortArgs = ``
 
-    // content nodes can be sorted by date
-    if (
-      interfaces.find((interfaceType) => interfaceType.name === `ContentNode`)
-    ) {
-      sortFields = `date`
-      sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
-    } else if (
-      // user and term types can't be sorted by date so sort alphabetically
-      name === `User` ||
-      interfaces.find((interfaceType) => interfaceType.name === `TermNode`)
-    ) {
-      sortFields = `name`
-      sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
+      // content nodes can be sorted by date
+      if (
+        interfaces.find((interfaceType) => interfaceType.name === `ContentNode`)
+      ) {
+        sortFields = `date`
+        sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
+      } else if (
+        // user and term types can't be sorted by date so sort alphabetically
+        name === `User` ||
+        interfaces.find((interfaceType) => interfaceType.name === `TermNode`)
+      ) {
+        sortFields = `name`
+        sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
+      }
+
+      const typeOptions = getTypeOptions({ typeName: name })
+
+      return {
+        nodeListFieldName,
+        nodeTypeName: name,
+        archivePathBase,
+        sortArgs,
+        sortFields,
+        sortOrder,
+        typeOptions,
+        routeOptions: collectionRouteOptions,
+      }
     }
+  )
+  // .filter(({ nodeListFieldName }) =>
+  //   // only create routes if the node list field actually exists in
+  //   // the Gatsby schema
+  //   gatsbySchemaRootFields.includes(nodeListFieldName)
+  // )
 
-    const typeOptions = getTypeOptions({ typeName: name })
-
-    return {
-      nodeListFieldName,
-      nodeTypeName: name,
-      archivePathBase,
-      sortArgs,
-      sortFields,
-      sortOrder,
-      typeOptions,
-      routeOptions: collectionRouteOptions,
-    }
-  })
+  return normalizedCollectionGraphQLTypes
 }
 
 /**
@@ -558,6 +742,7 @@ const findDesiredTemplateByPathEnding = async (templatePathEnding) => {
   return matchedTemplate
 }
 
+const highlySpecificPathWarning = {}
 /**
  * getTemplatePath
  *
@@ -565,14 +750,80 @@ const findDesiredTemplateByPathEnding = async (templatePathEnding) => {
  * returns the most relevant template according to the template hierarchy
  * From least specific to most specific:
  * templates registered by plugins or themes -> site templates
- * node interface templates -> node type templates -> index.js (generic catch-all)
+ * node interface templates -> node type templates -> node type template with field value specifier
  *
  */
-const getTemplatePath = async ({ nodeTypeName, templateType }) => {
+const getTemplatePath = async ({ nodeTypeName, templateType, node }) => {
   const state = store.getState()
+  const {
+    gatsbyApi: { helpers },
+  } = state
   const { typeMap } = state.remoteSchema
 
   const nodeTypeInfo = typeMap.get(nodeTypeName)
+
+  const templates = await getTemplates()
+
+  const templatesWithFieldValueSpecifiers = templates
+    .map((templatePath) => {
+      if (!node) {
+        return false
+      }
+
+      const pathSplitOnSpaces = templatePath.split(` `)
+      // we're delimiting field names and values by spaces
+      // so if there are less than 2 spaces, we can skip this template
+      if (pathSplitOnSpaces.length - 1 < 2) {
+        return false
+      }
+
+      const fileNameNoExtension = path.basename(
+        templatePath,
+        path.extname(templatePath)
+      )
+
+      const fileNameSplitOnSpaces = fileNameNoExtension.split(` `)
+
+      const [typeName, fieldName, ...remainingItems] = fileNameSplitOnSpaces
+
+      if (typeName !== nodeTypeName) {
+        return false
+      }
+
+      const value = remainingItems.join(` `)
+
+      const gatsbyNode = helpers.getNode(node.id)
+      const nodeFieldValue = gatsbyNode[fieldName]
+      if (
+        nodeFieldValue === Number(value) ||
+        (typeof nodeFieldValue === `string` &&
+          (`"${nodeFieldValue}"` === value || `'${nodeFieldValue}'` === value))
+      ) {
+        return templatePath
+      }
+
+      return false
+    })
+    .filter(Boolean)
+
+  if (
+    templatesWithFieldValueSpecifiers.length > 1 &&
+    !highlySpecificPathWarning[node.id]
+  ) {
+    highlySpecificPathWarning[node.id] = true
+    helpers.reporter.log(``)
+    helpers.reporter.warn(
+      `[gatsby-plugin-wordpress] more than 1 highly specific template found for node "${
+        node.id
+      }".\nUsing the first available template.\n\n${templatesWithFieldValueSpecifiers.join(
+        `,\n`
+      )}\n`
+    )
+  }
+
+  if (templatesWithFieldValueSpecifiers.length) {
+    return templatesWithFieldValueSpecifiers[0]
+  }
 
   const nodeInterfaceTypeSettings = Object.entries(
     // convert plugin options type settings into an entries array
@@ -587,7 +838,18 @@ const getTemplatePath = async ({ nodeTypeName, templateType }) => {
       return accumulator
     }, {})
 
-  const typeInterfaces = nodeTypeInfo?.interfaces || []
+  const { useInterfaceTemplates = true } =
+    getTypeOptions({ typeName: nodeTypeName }).routes ?? {}
+
+  const typeInterfaces =
+    // if there are interfaces
+    // and interface templates aren't disabled for this type
+    nodeTypeInfo?.interfaces && useInterfaceTemplates
+      ? // get a list of node interfaces
+        nodeTypeInfo?.interfaces
+      : // otherwise return an empty array so no interface
+        // templates are found for this type
+        []
 
   const gatsbyNodeInterfacesThatIncludeThisType = typeInterfaces.filter(
     (typeInterface) => nodeInterfaceTypeSettings[typeInterface.name]
@@ -597,14 +859,14 @@ const getTemplatePath = async ({ nodeTypeName, templateType }) => {
     ({ name }) => name
   )
 
-  const templatesNamesToLookForInOrder = [
+  const templateHierarchy = [
     nodeTypeName,
     ...interfaceTemplateNames,
-    `index`,
+    // `index`,
   ]
 
   const availableTemplates = await Promise.all(
-    templatesNamesToLookForInOrder.map((templateName) =>
+    templateHierarchy.map((templateName) =>
       findDesiredTemplateByPathEnding(
         `/wp-templates/${templateType}/${templateName}`
       )
@@ -614,8 +876,8 @@ const getTemplatePath = async ({ nodeTypeName, templateType }) => {
   // the first available template is the one we want
   // these have already been sorted above
   // availableTemplates[0] doesn't work because the first may return undefined
-  // because each index corresponds to an entry in templatesNamesToLookForInOrder
-  // availableTemplates check for each of those if a template exists.
+  // because each index corresponds to an entry in templateHierarchy
+  // availableTemplates checks for each of those if a template exists.
   const template = availableTemplates.find(Boolean)
 
   return template

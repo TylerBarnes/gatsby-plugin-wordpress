@@ -13,16 +13,29 @@ module.exports = (options) => ({
                 archive: false,
               },
             },
+            PostFormat: {
+              routes: {
+                single: false,
+                archive: false,
+              },
+            },
             ContentNode: {
               routes: {
                 single: true,
-                archive: false,
+                archive: true,
+              },
+            },
+            TermNode: {
+              routes: {
+                single: true,
+                archive: true,
               },
             },
             MediaItem: {
               routes: {
-                single: false,
-                archive: false,
+                single: true,
+                archive: true,
+                useInterfaceTemplates: false,
               },
             },
           },
