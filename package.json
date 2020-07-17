@@ -2,7 +2,7 @@
   "name": "gatsby-plugin-wordpress",
   "description": "Source data from WPGraphQL in an efficient and scalable way.",
   "author": "Tyler Barnes <tylerdbarnes@gmail.com>",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "dependencies": {
     "@babel/plugin-proposal-class-properties": "^7.10.1",
     "@babel/plugin-proposal-private-methods": "^7.10.1",
