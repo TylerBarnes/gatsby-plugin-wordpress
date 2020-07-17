@@ -12,7 +12,6 @@ const { default: store } = require("gatsby-source-wordpress-experimental/store")
 
 exports.createPages = async ({ actions, graphql, reporter }) => {
   try {
-    const templates = await getTemplates()
     const routeConfigs = await getRouteConfigs({ graphql })
 
     let allPageNodes = []
@@ -22,7 +21,6 @@ exports.createPages = async ({ actions, graphql, reporter }) => {
         routeConfig,
         actions,
         graphql,
-        templates,
         reporter,
       }
 
@@ -70,18 +68,12 @@ exports.createPages = async ({ actions, graphql, reporter }) => {
   }
 }
 
-const createSinglePages = async ({
-  routeConfig,
-  graphql,
-  actions,
-  templates,
-}) => {
+const createSinglePages = async ({ routeConfig, graphql, actions }) => {
   const { nodeListFieldName, nodeTypeName, sortArgs } = routeConfig
 
-  const contentTypeTemplate = getTemplatePath({
-    templates,
-    pathEnding: `single/${nodeTypeName}`,
-    fallBackPathEnding: `single/index`,
+  const contentTypeTemplate = await getTemplatePath({
+    nodeTypeName,
+    templateType: `single`,
   })
 
   if (!contentTypeTemplate) {
@@ -143,6 +135,8 @@ const createSinglePages = async ({
     }
 
     if (process.env.NODE_ENV === `development`) {
+      // this is used to display in the console during development
+      // so that each page can log which component it uses for debugging
       context.component__DEVELOPMENT_ONLY = component
     }
 
@@ -152,8 +146,12 @@ const createSinglePages = async ({
     // page and an archive
     edge.context = context
 
+    const pagePath =
+      // make sure path ends in a forward slash
+      node.uri.charAt(node.uri.length - 1) === "/" ? node.uri : `${node.uri}/`
+
     const pageConfig = {
-      path: node.uri,
+      path: pagePath,
       component,
       context,
     }
@@ -170,11 +168,12 @@ const createPaginatedArchive = async (api) => {
       nodeListFieldName,
       nodeTypeName,
       sortArgs,
+      sortFields,
+      sortOrder,
       routeOptions,
       archivePathBase = ``,
     },
     graphql,
-    templates,
     actions,
     reporter,
     pageNodes,
@@ -247,10 +246,9 @@ const createPaginatedArchive = async (api) => {
 
   const { nodes } = data[nodeListFieldName]
 
-  const foundTemplatePath = getTemplatePath({
-    templates,
-    pathEnding: `archive/${nodeTypeName}`,
-    fallBackPathEnding: `archive/index`,
+  const foundTemplatePath = await getTemplatePath({
+    nodeTypeName,
+    templateType: `archive`,
   })
 
   if (!foundTemplatePath) {
@@ -300,36 +298,37 @@ const createPaginatedArchive = async (api) => {
 
   await Promise.all(
     chunkedContentNodes.map(async (nodesChunk, index) => {
-      const firstNode = nodesChunk[0]
+      // const offset = perPage * index
       const page = index + 1
-      const offset = perPage * index
       const isFirstArchivePage = page === 1
       const isLastArchivePage = page === chunkedContentNodes.length
       const previousArchivePath = getArchivePageNumberPath(page - 1)
       const nextArchivePath = getArchivePageNumberPath(page + 1)
+      const archiveNodeIds = nodesChunk.map(({ id }) => id)
 
       const path = getArchivePageNumberPath(page)
 
       const component = resolve(foundTemplatePath)
 
       const context = {
-        firstArchiveNodeId: firstNode.id,
         archivePage: page,
-        archiveOffset: offset,
         totalArchivePages: chunkedContentNodes.length,
-        isArchive: true,
-        archiveNodeType: nodeTypeName,
         isFirstArchivePage,
         isLastArchivePage,
         previousArchivePath,
         nextArchivePath,
-        perPage,
+        archiveNodeIds,
+        sortFields,
+        sortOrder,
+        id: null,
         // if we have a single node for this path,
         // then add it's context here as well
         ...(pageNodesByPath.get(path)?.context || {}),
       }
 
       if (process.env.NODE_ENV === `development`) {
+        // this is used to display in the console during development
+        // so that each page can log which component it uses for debugging
         context.component__DEVELOPMENT_ONLY = component
       }
 
@@ -482,19 +481,23 @@ const getRouteConfigs = async ({ graphql }) => {
     const collectionRouteOptions = getTypeNameRouteOptions(name)
     const nodeListFieldName = `all${typePrefix}${name}`
 
+    let sortFields = `null`
+    let sortOrder = `DESC`
     let sortArgs = ``
 
     // content nodes can be sorted by date
     if (
       interfaces.find((interfaceType) => interfaceType.name === `ContentNode`)
     ) {
-      sortArgs = `(sort: { fields: modifiedGmt, order: DESC })`
+      sortFields = `date`
+      sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
     } else if (
       // user and term types can't be sorted by date so sort alphabetically
       name === `User` ||
       interfaces.find((interfaceType) => interfaceType.name === `TermNode`)
     ) {
-      sortArgs = `(sort: { fields: name, order: DESC })`
+      sortFields = `name`
+      sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
     }
 
     const typeOptions = getTypeOptions({ typeName: name })
@@ -504,13 +507,26 @@ const getRouteConfigs = async ({ graphql }) => {
       nodeTypeName: name,
       archivePathBase,
       sortArgs,
+      sortFields,
+      sortOrder,
       typeOptions,
       routeOptions: collectionRouteOptions,
     }
   })
 }
 
-const findTemplateByPathEnding = ({ templatePathEnding, templates }) => {
+/**
+ * findDesiredTemplateByPathEnding
+ *
+ * From all available and registered templates,
+ * finds the first matching template
+ * (subtracts the file extension to support tsx, js, jsx, etc)
+ *
+ * @param {string} templatePathEnding
+ */
+const findDesiredTemplateByPathEnding = async (templatePathEnding) => {
+  const templates = await getTemplates()
+
   const stripExtensionFromPath = (path) => {
     const firstIndex = path.includes(`/wp-templates`)
       ? path.lastIndexOf(`/wp-templates`)
@@ -542,20 +558,65 @@ const findTemplateByPathEnding = ({ templatePathEnding, templates }) => {
   return matchedTemplate
 }
 
-const getTemplatePath = ({ templates, pathEnding, fallBackPathEnding }) => {
-  const templatePathEnding = `/wp-templates/${pathEnding}`
+/**
+ * getTemplatePath
+ *
+ * takes a typename and a template type (either single or archive)
+ * returns the most relevant template according to the template hierarchy
+ * From least specific to most specific:
+ * templates registered by plugins or themes -> site templates
+ * node interface templates -> node type templates -> index.js (generic catch-all)
+ *
+ */
+const getTemplatePath = async ({ nodeTypeName, templateType }) => {
+  const state = store.getState()
+  const { typeMap } = state.remoteSchema
 
-  const templatePath = findTemplateByPathEnding({
-    templates,
-    templatePathEnding,
-  })
+  const nodeTypeInfo = typeMap.get(nodeTypeName)
 
-  if (!templatePath) {
-    templatePath = findTemplateByPathEnding({
-      template,
-      templatePathEnding: `/wp-templates/${fallBackPathEnding}`,
-    })
-  }
+  const nodeInterfaceTypeSettings = Object.entries(
+    // convert plugin options type settings into an entries array
+    state.gatsbyApi.pluginOptions.type
+  )
+    // filter type settings that aren't node interfaces
+    .filter(([_, typeSetting]) => typeSetting.nodeInterface)
+    // turn this back into an object
+    .reduce((accumulator, [key, value]) => {
+      accumulator[key] = value
 
-  return templatePath
+      return accumulator
+    }, {})
+
+  const typeInterfaces = nodeTypeInfo?.interfaces || []
+
+  const gatsbyNodeInterfacesThatIncludeThisType = typeInterfaces.filter(
+    (typeInterface) => nodeInterfaceTypeSettings[typeInterface.name]
+  )
+
+  const interfaceTemplateNames = gatsbyNodeInterfacesThatIncludeThisType.map(
+    ({ name }) => name
+  )
+
+  const templatesNamesToLookForInOrder = [
+    nodeTypeName,
+    ...interfaceTemplateNames,
+    `index`,
+  ]
+
+  const availableTemplates = await Promise.all(
+    templatesNamesToLookForInOrder.map((templateName) =>
+      findDesiredTemplateByPathEnding(
+        `/wp-templates/${templateType}/${templateName}`
+      )
+    )
+  )
+
+  // the first available template is the one we want
+  // these have already been sorted above
+  // availableTemplates[0] doesn't work because the first may return undefined
+  // because each index corresponds to an entry in templatesNamesToLookForInOrder
+  // availableTemplates check for each of those if a template exists.
+  const template = availableTemplates.find(Boolean)
+
+  return template
 }
