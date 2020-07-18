@@ -787,9 +787,18 @@ const getTemplatePath = async ({ nodeTypeName, templateType, node }) => {
 
       const value = remainingItems.join(` `)
 
+      const booleanValue =
+        [`true`, `false`, `null`].includes(value) &&
+        !value.includes(`'`) &&
+        !value.includes(`"`)
+          ? JSON.parse(value)
+          : value
+
       const gatsbyNode = helpers.getNode(node.id)
       const nodeFieldValue = gatsbyNode[fieldName]
       if (
+        nodeFieldValue === booleanValue ||
+        nodeFieldValue === value ||
         nodeFieldValue === Number(value) ||
         (typeof nodeFieldValue === `string` &&
           (`"${nodeFieldValue}"` === value || `'${nodeFieldValue}'` === value))
