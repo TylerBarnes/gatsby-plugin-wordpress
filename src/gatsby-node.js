@@ -225,13 +225,13 @@ const handleTemplateReports = async (
   await fs.ensureDir(directory)
 
   await fs.writeFile(
-    `${directory}/single-page-routing.json`,
+    `${directory}/single-pages.json`,
     JSON.stringify(singleReports, null, 2),
     `utf8`
   )
 
   await fs.writeFile(
-    `${directory}/archive-page-routing.json`,
+    `${directory}/archive-pages.json`,
     JSON.stringify(archiveReports, null, 2),
     `utf8`
   )
@@ -545,8 +545,8 @@ const getTypeOptions = ({ typeName }) => {
 }
 
 const getTypeNameRouteOptions = (typeName) => {
-  const { routes } = getTypeOptions({ typeName })
-  return routes
+  const { pages } = getTypeOptions({ typeName })
+  return pages
 }
 
 const getTemplates = async () => {
@@ -839,7 +839,7 @@ const getTemplatePath = async ({ nodeTypeName, templateType, node }) => {
     }, {})
 
   const { useInterfaceTemplates = true } =
-    getTypeOptions({ typeName: nodeTypeName }).routes ?? {}
+    getTypeOptions({ typeName: nodeTypeName }).pages ?? {}
 
   const typeInterfaces =
     // if there are interfaces

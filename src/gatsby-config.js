@@ -8,31 +8,31 @@ module.exports = (options) => ({
         {
           type: {
             __all: {
-              routes: {
+              pages: {
                 single: false,
                 archive: false,
               },
             },
             PostFormat: {
-              routes: {
+              pages: {
                 single: false,
                 archive: false,
               },
             },
             ContentNode: {
-              routes: {
+              pages: {
                 single: true,
                 archive: true,
               },
             },
             TermNode: {
-              routes: {
+              pages: {
                 single: true,
                 archive: true,
               },
             },
             MediaItem: {
-              routes: {
+              pages: {
                 single: true,
                 archive: true,
                 useInterfaceTemplates: false,
