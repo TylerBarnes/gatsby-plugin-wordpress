@@ -690,11 +690,6 @@ const getRouteConfigs = async ({ graphql }) => {
       }
     }
   )
-  // .filter(({ nodeListFieldName }) =>
-  //   // only create routes if the node list field actually exists in
-  //   // the Gatsby schema
-  //   gatsbySchemaRootFields.includes(nodeListFieldName)
-  // )
 
   return normalizedCollectionGraphQLTypes
 }
