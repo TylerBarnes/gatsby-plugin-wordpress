@@ -1,19 +1,16 @@
 // global-teardown.js
-import kill from "tree-kill"
-import { resetSchema } from "./increment-remote-data"
+// import kill from "tree-kill"
+import fs from "fs-extra"
 
 module.exports = async function globalTeardown() {
   if (!process.env.START_SERVER) {
     return
   }
 
-  const gatsbyProcess = global.__GATSBY_PROCESS
+  await fs.remove(`./.test-runtime/WordPress/reports`)
 
-  kill(gatsbyProcess.pid)
-  console.log(`\nkilled Gatsby`)
+  // const gatsbyProcess = global.__GATSBY_PROCESS
 
-  if (process.env.WPGQL_INCREMENT) {
-    await resetSchema()
-    console.log(`reset remote api mutations`)
-  }
+  // kill(gatsbyProcess.pid)
+  // console.log(`\nkilled Gatsby`)
 }

@@ -48,9 +48,14 @@
     "url": "https://github.com/gatsbyjs/gatsby-source-wordpress-experimental.git"
   },
   "scripts": {
+    "prepublishOnly": "npm run test",
     "build": "babel src --out-dir . --ignore **/__tests__",
     "prepare": "cross-env NODE_ENV=production BABEL_ENV=production npm run build",
-    "watch": "babel -w src --out-dir . --ignore **/__tests__ --verbose"
+    "watch": "babel -w src --out-dir . --ignore **/__tests__ --verbose",
+    "clean-test-runtime": "cd .test-runtime && gatsby clean",
+    "build-test-runtime": "cd .test-runtime && yarn build",
+    "develop-test-runtime": "cd .test-runtime && yarn develop",
+    "test": "yarn build && yarn clean-test-runtime && START_SERVER=true jest ./.test-runtime/__tests__/integration"
   },
   "engines": {
     "node": ">=10.0.0"

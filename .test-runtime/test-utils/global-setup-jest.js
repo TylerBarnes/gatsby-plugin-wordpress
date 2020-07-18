@@ -1,9 +1,7 @@
 // global-setup.js
 import { spawn } from "child_process"
-import on from "wait-on"
 import path from "path"
-
-import { mutateSchema, resetSchema } from "./increment-remote-data"
+// import on from "wait-on"
 
 // require .env.development or .env.production
 require(`dotenv`).config({
@@ -19,26 +17,9 @@ module.exports = async function globalSetup() {
     return
   }
 
-  if (!process.env.WORDPRESS_BASIC_AUTH) {
-    console.log(
-      `lease add the env var WORDPRESS_BASIC_AUTH. It should be a string in the following pattern: base64Encode(\`\${username}:\${password}\`)`
-    )
-
-    await new Promise(resolve => setTimeout(resolve, 100))
-    process.exit(1)
-  }
-
-  if (process.env.WPGQL_INCREMENT) {
-    const response = await mutateSchema()
-    console.log(response)
-  } else {
-    const response = await resetSchema()
-    console.log(response)
-  }
-
   console.log(`\nstarting Gatsby`)
 
-  const gatsbyProcess = spawn(`yarn`, [`develop-test-runtime`], {
+  const gatsbyProcess = spawn(`yarn`, [`build-test-runtime`], {
     env: {
       ...process.env,
       NODE_ENV: `development`,
@@ -49,5 +30,9 @@ module.exports = async function globalSetup() {
 
   gatsbyProcess.stdout.pipe(process.stdout)
 
-  await on({ resources: [`http://localhost:8000`] })
+  await new Promise((resolve) => {
+    gatsbyProcess.on(`exit`, () => resolve())
+  })
+
+  // await on({ resources: [`http://localhost:8000`] })
 }
