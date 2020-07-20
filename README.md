@@ -23,143 +23,392 @@
   </a>
 </p>
 
-# gatsby-plugin-wordpress
+# Gatsby Plugin WordPress
 
-This plugin is a wrapper around [`gatsby-source-wordpress-experimental`](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental). The intent behind this plugin is to layer useful abstractions inspired by WordPress core on top of the data sourcing and caching work that the source plugin does.
+This plugin allows you to build WordPress sites with Gatsby in a standardized and streamlined way. It wraps around [gatsby-source-wordpress-experimental](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental#readme) to source data. Like in regular WordPress, this plugin will generate pages for you automatically.
 
-## How to use
+If you're brand new to Gatsby you'll want to go through the [GatsbyJS tutorial](https://www.gatsbyjs.org/tutorial/) first. If you're new to `gatsby-source-wordpress-experimental` you'll want to read through the ["Installation and Getting Started" page](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental/blob/master/docs/getting-started.md#installation--getting-started-baby_chick) of the docs.
 
-The plugin options for this plugin are passed directly through to `gatsby-source-wordpress-experimental`. Any options for this plugin should be mixed in with the options for the source plugin. You should install this plugin _instead of_ the source plugin, not alongside it. Configure this plugin as if it is the source plugin. Refer to the [source plugins docs](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental) for more info on available plugin options.
+- [Gatsby Plugin WordPress](#gatsby-plugin-wordpress)
+  - [How to use this plugin](#how-to-use-this-plugin)
+  - [Automatic Page creation](#automatic-page-creation)
+  - [Single Pages](#single-pages)
+  - [Archive pages](#archive-pages)
+  - [Single/Archive page combinations](#singlearchive-page-combinations)
+  - [Page URL's](#page-urls)
+  - [Template examples](#template-examples)
+    - [Single Page template example](#single-page-template-example)
+    - [Single Page with next and previous page links template example](#single-page-with-next-and-previous-page-links-template-example)
+    - [Single Page Interface node type template example](#single-page-interface-node-type-template-example)
+    - [Archive Page template example](#archive-page-template-example)
+    - [Archive Page node interface template example](#archive-page-node-interface-template-example)
+    - [Archive/Single Page combination node interface type template](#archivesingle-page-combination-node-interface-type-template)
+  - [Plugin options](#plugin-options)
+    - [General options](#general-options)
+    - [Archive Page options](#archive-page-options)
+    - [Reporting options](#reporting-options)
+  - [Themeing](#themeing)
+    - [Adding templates via themes](#adding-templates-via-themes)
+    - [Creating a useful archive template fallback](#creating-a-useful-archive-template-fallback)
+  - [Relevant Links](#relevant-links)
 
-## Features
+## How to use this plugin
 
-Currently the only feature of this plugin is that it creates pages for you using a simplified [template hierarchy](https://wphierarchy.com/) similar to what a PHP WordPress frontend will give you.
-Single pages will be created for you, and archive pages (like a blog listing) can be enabled as needed. Pages are created automatically and use templates that are found either in your Gatsby project, or in a Gatsby theme that registers templates with this plugin.
+The plugin options for this plugin are passed directly through to `gatsby-source-wordpress-experimental`. Any options for this plugin should be mixed in with the options for the source plugin. You should install this plugin _instead of_ the source plugin, not alongside it. Configure this plugin as if it is the source plugin. Refer to the [source plugins docs](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental) for more info on available [plugin options](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental/blob/master/docs/getting-started.md) or how to [get started](https://github.com/gatsbyjs/gatsby-source-wordpress-experimental/blob/master/docs/getting-started.md#installation--getting-started-baby_chick).
 
-## Page Creation
+## Automatic Page creation
 
-In this plugin, we have 2 conceptual types of pages. Single post pages and archive pages. A single post page is a page representing a single page or post from WordPress. An archive page is a set of pages which list out a historical list of posts or pages. Archive pages are paginated and numbered `/blog/`, `/blog/2/`, etc.
+Out of the box this plugin will generate 2 types of pages for you, single pages and archive pages. Single pages are pages which represent a single node of any type (Post, Page, User, etc). Archive pages are historical list pages of nodes that were created in the past, the classic example being a blog post listing page.
 
-Out of the box this plugin will create Gatsby pages out of your WordPress pages automatically. No archive pages will be generated until enabled via options.
+## Single Pages
 
-### Single Page Routing
+Single pages are automatically created using a simplified template hierarchy. This hierarchy is made up of all available templates in your project within the `src/wp-templates/single/` directory, or from within any themes you've installed.
 
-Pages, Posts, and any custom post types will have their single post pages generated as long as there is a corresponding template available at `./src/wp-templates/single/index.js` or `./src/wp-templates/single/TypeName.js` (for example `./src/wp-templates/single/Post.js`). MediaItems, Users, and other types will not have single pages generated for them until enabled via plugin options.
+The hierarchy goes from least specific templates to most specific templates, like so:
 
-You can enable them like so:
+- Node interface type templates (`src/wp-templates/single/NodeInterfaceType.js`)
+- Node type templates (`src/wp-templates/single/NodeType.js`)
+- Node field-value templates (`src/wp-templates/single/NodeType title 'My post title'.js`)
+
+Using the Post node type as an example, that would look like this:
+
+- `src/wp-templates/single/ContentNode.js`
+- `src/wp-templates/single/Post.js`
+- `src/wp-templates/single/Post databaseId 1024.js`
+
+If your project contained all 3 of these templates, all Posts would use the `Post.js` template except for the Post with a databaseId of 1024. If the `Post.js` template was removed, all posts would use the `ContentNode.js` template except for the Post with the db id of 1024.
+
+To understand the reason for this, you first need to understand that a node interface is a node type which is made up of multiple other node types which share some fields but have other fields which are unique to each other. In our case `ContentNode` is made up of `Post`, `Page`, and any other Custom Post Type node type (maybe `Team` or `OfficeLocation`). Having a hierarchy which includes node interface types allows us to share templates between different types of nodes. So we can have 1 template which includes both Post and Page.
+
+So going back to our example above, if we have these 3 templates
+
+- `src/wp-templates/single/ContentNode.js`
+- `src/wp-templates/single/Post.js`
+- `src/wp-templates/single/Post databaseId 1024.js`
+
+All Page nodes will use `ContentNode.js`, all Post nodes will use `Post.js` and the Post with a databaseId of 1024 will use the field-value template `Post databaseId 1024.js`.
+
+- [Skip to single/Post.js example](#single-page-template-example)
+- [Skip to single/ContentNode.js example](#single-page-interface-node-type-template-example)
+
+## Archive pages
+
+Archive pages are automatically created using a simplified template hierarchy. This hierarchy is made up of all available templates in your project within the `src/wp-templates/archive/` directory, or from within any themes you've installed.
+
+The hierarchy goes from least specific templates to most specific templates, like so:
+
+- Node interface type templates (`src/wp-templates/archive/NodeInterfaceType.js`)
+- Node type templates (`src/wp-templates/archive/NodeType.js`)
+
+This is very similar to our hierarchy for single pages, but is 1 step shorter. The same rules for node interface types apply here, so read the [single pages](#single-pages) section for more information.
+
+- [Skip to Archive page example](#archive-page-template-example)
+- [Skip to Archive node interface example](#archive-page-node-interface-template-example)
+
+## Single/Archive page combinations
+
+If a single page is created at the same path as an archive page, the single page and the archive page will be combined into 1 template and they will use the archive template.
+
+- [Skip to Single/Archive page example](#singlearchive-page-combinations)
+
+## Page URL's
+
+All created pages are built using the WordPress permalink for each page or the archive slug or rewrite. It's important to use these paths instead of coming up with something custom on the Gatsby side so that menus and custom field links work properly in Gatsby.
+
+## Template examples
+
+### Single Page template example
+
+In `src/wp-templates/single/Post.js`
 
 ```js
-{
-  resolve: "gatsby-plugin-wordpress",
-  options: {
-    type: {
-      MediaItems: {
-        routing: {
-          single: true
-        }
+import React from "react"
+import { graphql } from "gatsby"
+
+export default ({ data }) => <h1>{data.wpPost.title}</h1>
+
+export const query = graphql`
+  query Post($id: String!) {
+    wpPost(id: { eq: $id }) {
+      title
+    }
+  }
+`
+```
+
+### Single Page with next and previous page links template example
+
+In `src/wp-templates/single/Post.js`
+
+```js
+import React from "react"
+import { graphql } from "gatsby"
+import BlogPost from "../../components/template-parts/blog-post"
+
+export default ({ data }) => (
+  <>
+    <h1>{data.wpPost.title}</h1>
+    <Link to={data.nextPost.uri}>Next Post</Link>
+    <Link to={data.previousPost.uri}>Previous Post</Link>
+  </>
+)
+
+export const query = graphql`
+  query PostWithNextAndPrevious(
+    $id: String!
+    $nextSinglePageId: String
+    $previousSinglePageId: String
+  ) {
+    wpPost(id: { eq: $id }) {
+      title
+    }
+
+    # here we're renaming wpPost to nextPost so it doesn't conflict
+    nextPost: wpPost(id: { eq: $nextSinglePageId }) {
+      uri
+    }
+
+    # and this one gets renamed to previousPost
+    previousPost: wpPost(id: { eq: $previousSinglePageId }) {
+      uri
+    }
+  }
+`
+```
+
+### Single Page Interface node type template example
+
+This template will apply to Page, Post, and any Custom Post types.
+
+In `src/wp-templates/single/ContentNode.js`
+
+```js
+import React from "react"
+import { graphql } from "gatsby"
+import BlogPost from "../../components/template-parts/blog-post"
+
+export default ({ data }) => <h1>{data.wpContentNode.title}</h1>
+
+export const query = graphql`
+  query ContentNode($id: String!) {
+    wpContentNode(id: { eq: $id }) {
+      ... on WpNodeWithTitle {
+        title
       }
     }
   }
-}
+`
 ```
 
-If you want to disable all single pages out of the box, you can use type options for the `ContentNode` type. Perhaps you want to disable all single pages except for posts. That can be achieved as follows:
+### Archive Page template example
+
+In `src/wp-templates/archive/Post.js`
 
 ```js
-{
-  resolve: "gatsby-plugin-wordpress",
-  options: {
-    type: {
-      ContentNode: { // applies to all posts, pages, and custom post types.
-        routing: {
-          single: false,
-        }
-      },
-      Post: {
-        routing: {
-          // now that all single page routes are disabled
-          // we can enable single page routes just for Post nodes
-          single: true,
-        }
+import React from "react"
+import { Link } from "gatsby"
+import { graphql } from "gatsby"
+
+export default ({ pageContext, data }) => (
+  <>
+    {data.allWpPost.nodes.map((node) => (
+      <div key={`${node.uri}+${node.title}`}>
+        <Link to={node.uri}>{node.title}</Link>
+      </div>
+    ))}
+    {!pageContext.isFirst && pageContext.previousPagePath ? (
+      <Link to={pageContext.previousPagePath}>previous</Link>
+    ) : null}
+    {!pageContext.isLast && pageContext.nextPagePath ? (
+      <Link to={pageContext.nextPagePath}>next</Link>
+    ) : null}
+  </>
+)
+
+export const query = graphql`
+  query PostArchive(
+    $archiveNodeIds: [String]!
+    $sortOrder: [SortOrderEnum]!
+    $sortFields: [WpPostFieldsEnum]!
+  ) {
+    allWpPost(
+      filter: { id: { in: $archiveNodeIds } }
+      sort: { order: $sortOrder, fields: $sortFields }
+    ) {
+      nodes {
+        uri
+        title
       }
     }
   }
-}
+`
 ```
 
-Single page routing works based on a pre-defined file structure and contains a very simple hierarchy. All templates for our routing and hierarchy should be created/placed in `./src/wp-templates/`. For single pages, you can create a `./src/wp-templates/single/index.js` which will be used as a fallback template for any node type which doesn't have a more specific template. More specific templates should be created with the typename of the node you're targeting. For example for Post nodes you should create a template at `./src/wp-templates/single/Post.js`. This typename comes from WPGraphQL and it's important that the proper case is used. `./src/wp-templates/single/post.js` will not work.
+### Archive Page node interface template example
 
-### Archive Page Routing
-
-By default no paginated archive pages will be built. You will need to manually enable them in your config and enable archive pages for each CPT in WordPress.
-
-To enable archive pages for a type, add the following to your config:
+In `src/wp-templates/archive/ContentNode.js`
 
 ```js
-{
-  resolve: "gatsby-plugin-wordpress",
-  options: {
-    type: {
-      // Enables archive pages for all posts, pages, and custom post types.
-      ContentNode: {
-        routing: {
-          archive: true,
-        }
-      },
-      // Enables archive pages for users
-      User: {
-        routing: {
-          archive: true,
-        }
+import React from "react"
+import { Link } from "gatsby"
+import { graphql } from "gatsby"
+
+export default ({ pageContext, data }) => (
+  <>
+    {data.allWpContentNode.nodes.map((node) => (
+      <div key={`${node.uri}+${node.title}`}>
+        <Link to={node.uri}>{node.title}</Link>
+      </div>
+    ))}
+    {!pageContext.isFirst && pageContext.previousPagePath ? (
+      <Link to={pageContext.previousPagePath}>previous</Link>
+    ) : null}
+    {!pageContext.isLast && pageContext.nextPagePath ? (
+      <Link to={pageContext.nextPagePath}>next</Link>
+    ) : null}
+  </>
+)
+
+export const query = graphql`
+  query ContentNodeArchive(
+    $archiveNodeIds: [String]!
+    $sortOrder: [SortOrderEnum]!
+    $sortFields: [WpContentNodeFieldsEnum]!
+  ) {
+    allWpContentNode(
+      filter: { id: { in: $archiveNodeIds } }
+      sort: { order: $sortOrder, fields: $sortFields }
+    ) {
+      nodes {
+        id
+        uri
       }
     }
   }
-}
+`
 ```
 
-#### Posts per paginated archive page
+### Archive/Single Page combination node interface type template
 
-By default the number of nodes/posts per page will be 10, but you can customize that with the `perPage` route option:
+In `src/wp-templates/archive/ContentNode.js`
 
 ```js
-{
-  resolve: "gatsby-plugin-wordpress",
-  options: {
-    type: {
-      Post: {
-        routing: {
-          perPage: 20,
-        }
+import React from "react"
+import { Link } from "gatsby"
+import { graphql } from "gatsby"
+
+export default ({ pageContext, data }) => (
+  <>
+    <h1>{data.wpContentNode.title}</h1>
+    {data.allWpContentNode.nodes.map((node) => (
+      <div key={`${node.uri}+${node.title}`}>
+        <Link to={node.uri}>{node.title}</Link>
+      </div>
+    ))}
+    {!pageContext.isFirst && pageContext.previousPagePath ? (
+      <Link to={pageContext.previousPagePath}>previous</Link>
+    ) : null}
+    {!pageContext.isLast && pageContext.nextPagePath ? (
+      <Link to={pageContext.nextPagePath}>next</Link>
+    ) : null}
+  </>
+)
+
+export const query = graphql`
+  query ArchiveContentNodeWithSingleContentNode(
+    $archiveNodeIds: [String]!
+    $sortOrder: [SortOrderEnum]!
+    $sortFields: [WpContentNodeFieldsEnum]!
+    $id: String
+  ) {
+    wpContentNode(id: { eq: $id }) {
+      ... on WpNodeWithTitle {
+        title
+      }
+    }
+    allWpContentNode(
+      filter: { id: { in: $archiveNodeIds } }
+      sort: { order: $sortOrder, fields: $sortFields }
+    ) {
+      nodes {
+        id
+        uri
       }
     }
   }
-}
+`
 ```
 
-#### Changing the archive URL
+## Plugin options
 
-The URL of your archive pages will be automatically taken from the WordPress archive page permalink. It's recommended to only change this URL on the WordPress side so that WP logic can be aware of what your archive pages URL's are. However, if you need to you can change this on the Gatsby side you can do so using the `archivePathBase` routing option.
+### General options
+
+If you want to disable a type from using the interface node step of the template hierarchy, you can do so on the type options for that type using the `useInterfaceTemplates` option. You can also disable archive or single page creation per type via plugin options if needed, but it's recommended to add or delete templates instead.
 
 ```js
 {
-  resolve: "gatsby-plugin-wordpress",
-  options: {
-    type: {
-      Post: {
-        routing: {
-          archivePathBase: `/my-special-blog-url/very-nice/`,
+    resolve: `gatsby-plugin-wordpress`,
+    options: {
+        type: {
+            Post: {
+                pages: {
+                  useInterfaceTemplates: false // default is true
+                  archive: false, // the default is true
+                  single: true, // the default is true
+                }
+            }
+            MediaItem: {
+                pages: {
+                  useInterfaceTemplates: true // default is false
+                }
+            }
         }
-      }
     }
-  }
 }
 ```
 
-Note that if a single page and an archive page share the same URL and archive routing is enabled, they will both use the archive page template.
+### Archive Page options
 
-#### Archive page template hierarchy
+You may want to change the number of nodes displayed per page for your archive page, or change the sort order or which field your archive is sorted by. You can do that via type options. Below is an example of all available archive options:
 
-Archive page routing works based on a pre-defined file structure and contains a very simple hierarchy. All templates for our routing and hierarchy should be created/placed in `./src/wp-templates/`. For archive pages, you can create a `./src/wp-templates/archive/index.js` which will be used as a fallback template for any node type which doesn't have a more specific template. More specific templates should be created with the typename of the node you're targeting. For example for Post nodes you should create a template at `./src/wp-templates/archive/Post.js`. This typename comes from WPGraphQL and it's important that the proper case is used. `./src/wp-templates/archive/post.js` will not work.
+```js
+{
+    resolve: `gatsby-plugin-wordpress`,
+    options: {
+        type: {
+            Post: {
+                perPage: 5, // default is 10
+                sortFields: `slug` // default is date
+                sortOrder: `ASC`, // default is DESC
+            }
+        }
+    }
+}
+```
+
+Note that if you add sort fields which are not supported by your templates node type, your build will error. An example of this is trying to sort by title with a ContentNode archive template. ContentNode does not support sorting by title so you will have to sort by slug instead.
+
+### Reporting options
+
+If you'd like to have a report of which single and archive pages were created or rejected (due to various reasons), you can enable the following option:
+
+```js
+{
+    resolve: `gatsby-plugin-wordpress`,
+    options: {
+        reports: {
+          templateRouting: true,
+        },
+    }
+}
+```
+
+That will print out 2 files on each build or data update. Each file will give you a list of created pages or for pages that couldn't be created, it will give you a reason (such as "Archive routing is disabled for this type in gatsby-config.js." or "No matching template exists.")
+
+- `./WordPress/reports/archive-pages.json`
+- `./WordPress/reports/single-pages.json`
+
+## Themeing
 
 ### Adding templates via themes
 
@@ -255,7 +504,7 @@ export const query = graphql`
 `
 ```
 
-## Relevant Links :link:
+## Relevant Links
 
 - [Changelog](./CHANGELOG.md)
 - [License](./LICENSE)
