@@ -88,6 +88,8 @@ So going back to our example above, if we have these 3 templates
 
 All Page nodes will use `ContentNode.js`, all Post nodes will use `Post.js` and the Post with a databaseId of 1024 will use the field-value template `Post databaseId 1024.js`.
 
+Note that you cannot use double quotes `"` to wrap strings in template titles. Single quotes or no quotes must be used `'` for string values (`Page title 'Homepage'.js`)
+
 - [Skip to single/Post.js example](#single-page-template-example)
 - [Skip to single/ContentNode.js example](#single-page-interface-node-type-template-example)
 
