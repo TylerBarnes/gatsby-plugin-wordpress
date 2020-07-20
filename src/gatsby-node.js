@@ -171,10 +171,18 @@ const formatReports = (reportType, reports) =>
         accumulator.accepted[current.type] =
           accumulator.accepted[current.type] || []
         accumulator.accepted[current.type].push(current)
+
+        accumulator.accepted[current.type] = accumulator.accepted[
+          current.type
+        ].sort((a, b) => a.path.localeCompare(b.path))
       } else {
         accumulator.rejected[current.type] =
           accumulator.rejected[current.type] || []
         accumulator.rejected[current.type].push(current)
+
+        accumulator.rejected[current.type] = accumulator.rejected[
+          current.type
+        ].sort((a, b) => a.path.localeCompare(b.path))
       }
 
       return accumulator
