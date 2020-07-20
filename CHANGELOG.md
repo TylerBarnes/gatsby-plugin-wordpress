@@ -1,3 +1,11 @@
+# 0.1.0
+
+## New features
+
+- Simplified how pages are created (no plugin options config needed except special cases)
+- Updated docs to reflect latest changes
+- Added ability to create templates by field value combinations like `Page title 'My Page'.js`
+
 # 0.0.2
 
 ## New Features
