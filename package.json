@@ -2,7 +2,7 @@
   "name": "gatsby-plugin-wordpress",
   "description": "The complete WordPress experience for Gatsby. Wraps around gatsby-source-wordpress-experimental to add more features on top of the sourcing and caching that the source plugin does.",
   "author": "Tyler Barnes <tylerdbarnes@gmail.com>",
-  "version": "0.0.2",
+  "version": "0.1.0",
   "dependencies": {
     "@babel/plugin-proposal-class-properties": "^7.10.1",
     "@babel/plugin-proposal-private-methods": "^7.10.1",
