@@ -353,6 +353,7 @@ const createPaginatedArchive = async (api) => {
     sortOrder,
     routeOptions,
     archivePathBase = ``,
+    archiveOptions,
   } = routeConfig
 
   const templateType = `archive`
@@ -419,7 +420,7 @@ const createPaginatedArchive = async (api) => {
 
   const component = resolve(foundTemplatePath)
 
-  const perPage = routeOptions?.perPage ?? 10
+  const perPage = archiveOptions?.perPage ?? 10
   const chunkedContentNodes = chunk(nodes, perPage)
 
   const getArchivePageNumberPath = (pageNumber) => {
@@ -657,22 +658,24 @@ const getRouteConfigs = async ({ graphql }) => {
       const collectionRouteOptions = getTypeNameRouteOptions(name)
       const nodeListFieldName = `all${typePrefix}${name}`
 
+      const { archive } = getTypeOptions({ typeName: name }) ?? {}
+
       let sortFields = `null`
-      let sortOrder = `DESC`
       let sortArgs = ``
+      let sortOrder = archive?.sortOrder || `DESC`
 
       // content nodes can be sorted by date
       if (
         interfaces.find((interfaceType) => interfaceType.name === `ContentNode`)
       ) {
-        sortFields = `date`
+        sortFields = archive?.sortFields || `date`
         sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
       } else if (
         // user and term types can't be sorted by date so sort alphabetically
         name === `User` ||
         interfaces.find((interfaceType) => interfaceType.name === `TermNode`)
       ) {
-        sortFields = `name`
+        sortFields = archive?.sortFields || `name`
         sortArgs = `(sort: { fields: ${sortFields}, order: ${sortOrder} })`
       }
 
@@ -687,6 +690,7 @@ const getRouteConfigs = async ({ graphql }) => {
         sortOrder,
         typeOptions,
         routeOptions: collectionRouteOptions,
+        archiveOptions: archive,
       }
     }
   )
