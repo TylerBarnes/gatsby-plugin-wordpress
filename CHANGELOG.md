@@ -1,3 +1,8 @@
+# 0.1.2
+
+- Move gatsby-plugin-sharp and transformer-sharp to peerDeps instead of deps
+- Add sorting to page reporting so that snapshots are consistent
+
 # 0.1.1
 
 Fix Wapuu logo link

@@ -2,6 +2,8 @@ const merge = require("lodash/merge")
 
 module.exports = (options) => ({
   plugins: [
+    `gatsby-transformer-sharp`,
+    `gatsby-plugin-sharp`,
     {
       resolve: `gatsby-source-wordpress-experimental`,
       options: merge(
