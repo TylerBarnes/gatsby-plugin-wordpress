@@ -1,3 +1,7 @@
+# 0.1.1
+
+Fix Wapuu logo link
+
 # 0.1.0
 
 ## New features
