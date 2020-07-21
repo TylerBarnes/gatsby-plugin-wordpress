@@ -1,3 +1,11 @@
+# 0.1.4
+
+- Add `gatsby-plugin-root-import` to prevent the need to add ../../../../ to your templates and components
+
+# 0.1.3
+
+- Fix instances where an archive page as the home page will result in a path that contains `//`
+
 # 0.1.2
 
 - Move gatsby-plugin-sharp and transformer-sharp to peerDeps instead of deps
