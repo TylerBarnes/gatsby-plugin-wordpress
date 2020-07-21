@@ -219,11 +219,11 @@ export default ({ pageContext, data }) => (
         <Link to={node.uri}>{node.title}</Link>
       </div>
     ))}
-    {!pageContext.isFirst && pageContext.previousPagePath ? (
-      <Link to={pageContext.previousPagePath}>previous</Link>
+    {!pageContext.isFirstArchivePage && pageContext.previousArchivePath ? (
+      <Link to={pageContext.previousArchivePath}>previous</Link>
     ) : null}
-    {!pageContext.isLast && pageContext.nextPagePath ? (
-      <Link to={pageContext.nextPagePath}>next</Link>
+    {!pageContext.isLastArchivePage && pageContext.nextArchivePath ? (
+      <Link to={pageContext.nextArchivePath}>next</Link>
     ) : null}
   </>
 )
@@ -263,11 +263,11 @@ export default ({ pageContext, data }) => (
         <Link to={node.uri}>{node.title}</Link>
       </div>
     ))}
-    {!pageContext.isFirst && pageContext.previousPagePath ? (
-      <Link to={pageContext.previousPagePath}>previous</Link>
+    {!pageContext.isFirstPage && pageContext.previousArchivePath ? (
+      <Link to={pageContext.previousArchivePath}>previous</Link>
     ) : null}
-    {!pageContext.isLast && pageContext.nextPagePath ? (
-      <Link to={pageContext.nextPagePath}>next</Link>
+    {!pageContext.isLastPage && pageContext.nextArchivePath ? (
+      <Link to={pageContext.nextArchivePath}>next</Link>
     ) : null}
   </>
 )
