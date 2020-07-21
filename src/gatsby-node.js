@@ -387,8 +387,6 @@ const createPaginatedArchive = async (api) => {
     archivePathBase = archivePathBase.slice(0, -1)
   }
 
-  archivePathBase = kebabCase(archivePathBase)
-
   const { data } = await graphql(/* GraphQL */ `
     {
       ${nodeListFieldName}${sortArgs} {
@@ -432,19 +430,29 @@ const createPaginatedArchive = async (api) => {
   const chunkedContentNodes = chunk(nodes, perPage)
 
   const getArchivePageNumberPath = (pageNumber) => {
+    let path
+
     if (pageNumber <= 0) {
       // if we ask for a page before 1, we should give the last archive page
-      return `/${archivePathBase}/${chunkedContentNodes.length}/`
+      path = `/${archivePathBase}/${chunkedContentNodes.length}/`
     } else if (pageNumber > chunkedContentNodes.length) {
       // if we ask for a page past the last one, return the first one
-      return `/${archivePathBase}/`
+      path = `/${archivePathBase}/`
+    } else {
+      // if this is the first page, return the archive path base
+      path =
+        pageNumber === 1
+          ? `/${archivePathBase}/`
+          : // otherwise add the page number after the base
+            `/${archivePathBase}/${pageNumber}/`
     }
 
-    // if this is the first page, return the archive path base
-    return pageNumber === 1
-      ? `/${archivePathBase}/`
-      : // otherwise add the page number after the base
-        `/${archivePathBase}/${pageNumber}/`
+    // if there was no archive path base, the home page is an archive page
+    // this can be a problem though since we're expecting it to be a string above
+    // so some urls can contain a single unwanted //. Just replace it 🤷‍♂️
+    path = path.replace(`//`, `/`)
+
+    return path
   }
 
   // this map is
