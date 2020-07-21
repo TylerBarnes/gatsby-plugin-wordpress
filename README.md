@@ -308,11 +308,11 @@ export default ({ pageContext, data }) => (
         <Link to={node.uri}>{node.title}</Link>
       </div>
     ))}
-    {!pageContext.isFirst && pageContext.previousPagePath ? (
-      <Link to={pageContext.previousPagePath}>previous</Link>
+    {!pageContext.isFirstArchivePage && pageContext.previousPagePath ? (
+      <Link to={pageContext.previousArchivePath}>previous</Link>
     ) : null}
-    {!pageContext.isLast && pageContext.nextPagePath ? (
-      <Link to={pageContext.nextPagePath}>next</Link>
+    {!pageContext.isLastArchivePage && pageContext.nextArchivePath ? (
+      <Link to={pageContext.nextArchivePath}>next</Link>
     ) : null}
   </>
 )
