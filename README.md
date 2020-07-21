@@ -47,6 +47,7 @@ If you're brand new to Gatsby you'll want to go through the [GatsbyJS tutorial](
     - [General options](#general-options)
     - [Archive Page options](#archive-page-options)
     - [Reporting options](#reporting-options)
+  - [Additional Plugin installed by this plugin](#additional-plugin-installed-by-this-plugin)
   - [Themeing](#themeing)
     - [Adding templates via themes](#adding-templates-via-themes)
     - [Creating a useful archive template fallback](#creating-a-useful-archive-template-fallback)
@@ -409,6 +410,10 @@ That will print out 2 files on each build or data update. Each file will give yo
 
 - `./WordPress/reports/archive-pages.json`
 - `./WordPress/reports/single-pages.json`
+
+## Additional Plugin installed by this plugin
+
+- [`gatsby-plugin-root-import`](https://www.gatsbyjs.org/packages/gatsby-plugin-root-import/) allows importing from the src directory (`src/components/SEO`) instead of writing `../../../`.
 
 ## Themeing
 

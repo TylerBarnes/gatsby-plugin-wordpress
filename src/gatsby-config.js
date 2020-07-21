@@ -4,6 +4,7 @@ module.exports = (options) => ({
   plugins: [
     `gatsby-transformer-sharp`,
     `gatsby-plugin-sharp`,
+    `gatsby-plugin-root-import`,
     {
       resolve: `gatsby-source-wordpress-experimental`,
       options: merge(
